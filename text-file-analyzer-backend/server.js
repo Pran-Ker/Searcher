@@ -5,13 +5,20 @@ const fs = require('fs');
 const AWS = require('aws-sdk');
 const app = express();
 const upload = multer({ dest: 'uploads/' });
+const cors = require('cors');
+app.use(cors());
 
-// Configure AWS S3
+// Configure AWS
 const s3 = new AWS.S3({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   region: process.env.AWS_REGION
 });
+
+function extractSentences(text, word) {
+  const regex = new RegExp(`[^.!?]*\\b${word}\\b[^.!?]*[.!?]`, 'gi');
+  return text.match(regex) || [];
+}
 
 // Upload endpoint
 app.post('/upload', upload.single('file'), (req, res) => {
@@ -35,8 +42,8 @@ app.post('/upload', upload.single('file'), (req, res) => {
       return res.status(500).send('Failed to read the file');
     }
 
+    // Extract sentences containing the word
     const sentences = extractSentences(fileContent, word);
-
 
     const params = {
       Bucket: process.env.S3_BUCKET_NAME,
@@ -44,9 +51,7 @@ app.post('/upload', upload.single('file'), (req, res) => {
       Body: fileContent
     };
 
-
-    //Upload to S3
-
+    // Upload the file to S3
     s3.upload(params, function(err, data) {
       if (err) {
         console.error('Error uploading file:', err);
@@ -65,7 +70,8 @@ app.post('/upload', upload.single('file'), (req, res) => {
 
 function extractSentences(text, word) {
   const regex = new RegExp(`[^.!?]*\\b${word}\\b[^.!?]*[.!?]`, 'gi');
-  return text.match(regex) || [];
+  console.log(String(text).match(regex) || []);
+  return String(text).match(regex) || [];
 }
 
 // Start the server
