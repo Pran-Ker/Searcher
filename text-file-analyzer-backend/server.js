@@ -3,78 +3,82 @@ const express = require('express');
 const multer = require('multer');
 const fs = require('fs');
 const AWS = require('aws-sdk');
+const cors = require('cors');
+const createCsvWriter = require('csv-writer').createObjectCsvWriter;
+
 const app = express();
 const upload = multer({ dest: 'uploads/' });
-const cors = require('cors');
+
 app.use(cors());
 
-// Configure AWS
 const s3 = new AWS.S3({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   region: process.env.AWS_REGION
 });
 
-function extractSentences(text, word) {
+function extractSentencesAndCount(text, word) {
   const regex = new RegExp(`[^.!?]*\\b${word}\\b[^.!?]*[.!?]`, 'gi');
-  return text.match(regex) || [];
+  let matches = text.match(regex) || [];
+  let sum=0;
+  return matches.map(sentence => {
+    const count = (sentence.match(new RegExp(`\\b${word}\\b`, 'gi')) || []).length;
+    sum+=count;
+    //console.log(sentence, count);
+    return { sentence, count };
+  }
+  ).filter(sentence => sentence.count > 0).map(sentence => ({ ...sentence, count: sum }));
 }
 
-// Upload endpoint
+function generateCSV(data) {
+  const csvWriter = createCsvWriter({
+    path: 'output/sentences.csv',
+    header: [
+      {id: 'sentence', title: 'Sentence'},
+      {id: 'count', title: 'Word Count'}
+    ]
+  });
+  
+  // Write data to CSV file`
+  csvWriter.writeRecords(data)
+    .then(() => {
+      console.log('CSV file has been written successfully.');
+    })
+    .catch(err => {
+      console.error('Error writing CSV file:', err);
+    });
+}
+
 app.post('/upload', upload.single('file'), (req, res) => {
   const file = req.file;
   const word = req.body.word;
-  
-  // console.log('AWS Access Key:', process.env.AWS_ACCESS_KEY_ID);
-  // console.log('AWS Secret Access Key:', process.env.AWS_SECRET_ACCESS_KEY);
-  // console.log('AWS Region:', process.env.AWS_REGION);
-  // console.log('AWS Bucket:', process.env.S3_BUCKET_NAME);
 
   if (!file || !word) {
     return res.status(400).send('File and word are required.');
   }
-  console.log('AWS Bucket:', process.env.S3_BUCKET_NAME);
 
-  // Read the file
-  fs.readFile(file.path, (err, fileContent) => {
+  fs.readFile(file.path, 'utf8', (err, fileContent) => {
     if (err) {
       console.error('Error reading file:', err);
       return res.status(500).send('Failed to read the file');
     }
 
-    // Extract sentences containing the word
-    const sentences = extractSentences(fileContent, word);
+    // Extract sentences containing the word and count occurrences
+    const sentencesData = extractSentencesAndCount(fileContent, word);
+    
+    // Generate CSV from the extracted data
+    generateCSV(sentencesData);
 
-    const params = {
-      Bucket: process.env.S3_BUCKET_NAME,
-      Key: file.originalname, 
-      Body: fileContent
-    };
-
-    // Upload the file to S3
-    s3.upload(params, function(err, data) {
-      if (err) {
-        console.error('Error uploading file:', err);
-        return res.status(500).send('Failed to upload file');
-      }
-      console.log('File uploaded successfully. Location:');
-      res.send({
-        message: 'File uploaded successfully',
-        word: word,
-        sentences: sentences,
-        filePath: data.Location
-      });
+    res.send({
+      message: 'File uploaded and processed successfully',
+      word: word,
+      sentences: sentencesData.map(item => item.sentence),
+      count: sentencesData.map(item => item.count)      
+      // filePath should be updated correctly upon S3 upload confirmation
     });
   });
 });
 
-function extractSentences(text, word) {
-  const regex = new RegExp(`[^.!?]*\\b${word}\\b[^.!?]*[.!?]`, 'gi');
-  console.log(String(text).match(regex) || []);
-  return String(text).match(regex) || [];
-}
-
-// Start the server
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}.`);
